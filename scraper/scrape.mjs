@@ -162,20 +162,48 @@ export function parseRelatorio(html, { url, titulo, data }) {
     analista = known ? known[1] : 'Genial Analisa';
   }
 
-  // --- Leitura Dinâmica: recomendação / preço / preço-alvo
-  const li = texto.indexOf('Leitura Dinâmica');
-  const box = li >= 0 ? texto.slice(li, li + 400) : '';
+// --- Leitura Dinâmica: recomendação / preço / preço-alvo
+  const li = texto.indexOf('Leitura Din');           // sem acento fixo
+  const box = li >= 0 ? texto.slice(li, li + 500) : texto;
 
-  let rec = (box.match(/Recomenda(?:ções|ção)\s+(Compra(?:r)?|Manter|Vender|Em Revisão|Neutro)/i) || [])[1] || null;
+  let rec = (box.match(/Recomenda(?:ções|ção|coes|cao)\s*:?\s*(Compra(?:r)?|Manter|Vender|Em\s*Revis[ãa]o|Neutro)/i) || [])[1] || null;
   if (rec) {
-    rec = rec.toUpperCase();
-    if (rec === 'COMPRA') rec = 'COMPRAR'; // o site escreve "Compra"
+    rec = rec.replace(/\s+/g, ' ').toUpperCase();
+    if (rec === 'COMPRA') rec = 'COMPRAR';
   }
 
-  const precoAtual = money((box.match(/Preço\s*\(\d{2}\/\d{2}\)\s*R\$\s*([\d.,]+)/i) || [])[1]);
-  let precoAlvo = money((box.match(/Preço\s*Alvo\s*R\$\s*([\d.,]+)/i) || [])[1]);
-  // "R$ 0,00" no site = sem preço-alvo (recomendação suspensa) → null
+  // o ticker oficial é o do box (ex.: a nota "Axia" é precificada em ALUP11)
+  const boxTk = (box.match(/\[\s*([A-Z]{4}\d{1,2})\s*\]/) || [])[1];
+  if (boxTk) ticker = boxTk;
+
+  // "Preço (13/07) R$ 30,29" — mas o site varia: pode não ter a data, pode ter
+  // "Preço de Fechamento", quebras de linha, etc. Então pegamos TODOS os
+  // "R$ x" do box em ordem: o 1º é o preço atual, o 2º é o preço-alvo.
+  let precoAtual = null;
+  let precoAlvo  = null;
+
+  const alvoM = box.match(/Pre[çc]o\s*[- ]?\s*Alvo[^\d]{0,20}([\d.,]+)/i);
+  if (alvoM) precoAlvo = money(alvoM[1]);
+
+  const atualM = box.match(/Pre[çc]o\s*(?!Alvo)(?:de\s*Fechamento)?\s*(?:\(\s*\d{2}\/\d{2}\s*\))?[^\d]{0,20}([\d.,]+)/i);
+  if (atualM) precoAtual = money(atualM[1]);
+
+  // rede de segurança: se algum falhou, usa a ordem dos valores em R$
+  if (precoAtual === null || precoAlvo === null) {
+    const nums = [...box.matchAll(/R\$\s*([\d.,]+)/g)].map(m => money(m[1]));
+    if (precoAtual === null && nums[0] != null) precoAtual = nums[0];
+    if (precoAlvo  === null && nums[1] != null) precoAlvo  = nums[1];
+  }
+
+  // último recurso: o corpo quase sempre traz "preço-alvo de R$ 37,00"
+  if (precoAlvo === null) {
+    const m2 = texto.match(/pre[çc]o[- ]alvo[^\d]{0,25}([\d.,]+)/i);
+    if (m2) precoAlvo = money(m2[1]);
+  }
+
+  // "R$ 0,00" = placeholder de recomendação suspensa → sem alvo
   if (precoAlvo === 0) precoAlvo = null;
+  if (precoAtual === 0) precoAtual = null;
 
   // --- assunto: o que vem depois do "|" no título
   const assunto = (tituloLimpo.split('|')[1] || tituloLimpo).trim();
